@@ -36,8 +36,7 @@ This server is designed to be used as a **tool backend** for LLM agents (MCP-sty
 │  Server    │
 ├────────────┤
 │ /search    │───▶ LangSearch API
-│ /scrape-   │
-│ summarize  │───▶ Chrome (CDP 9222)
+│ /scrape    │───▶ Chrome (CDP 9222)
 └────────────┘
 ```
 
@@ -172,12 +171,12 @@ POST /search
 
 ---
 
-### 2️⃣ Scrape & Summarize Webpage
+### 2️⃣ Scrape Webpage
 
 **Endpoint**
 
 ```
-POST /scrape-and-summarize
+POST /scrape
 ```
 
 **Request Body**
@@ -202,17 +201,6 @@ POST /scrape-and-summarize
 
 ---
 
-## 🧠 Summarization Strategy
-
-The server **intentionally decouples scraping from summarization**.
-
-Current implementation uses a placeholder:
-
-```python
-def summarize_text(text: str) -> str:
-    return text[:500] + "..."
-```
-
 ### Plug-in options
 
 * OpenAI / Azure OpenAI
@@ -232,7 +220,7 @@ Typical agent flow:
 ```
 /search → select result.url
       ↓
-/scrape-and-summarize(url)
+/scrape(url)
       ↓
 LLM reasoning / synthesis
 ```
