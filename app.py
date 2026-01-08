@@ -8,6 +8,26 @@ from playwright.async_api import async_playwright
 from readability import Document
 from bs4 import BeautifulSoup
 import asyncio
+import sqlite3
+import uuid
+from datetime import datetime
+from fastapi import FastAPI, HTTPException
+from models import (
+    MemoryStoreRequest,
+    MemoryStoreResponse,
+    MemoryRetrieveRequest,
+    MemoryRetrieveResponse,
+    MemoryItem,
+    MemoryForgetRequest,
+    MemoryForgetResponse
+)
+from db import (
+    init_db,
+    insert_memory,
+    fetch_memories,
+    delete_memory,
+    get_memory_stats
+)
 
 
 
@@ -17,6 +37,22 @@ LANGSEARCH_API_KEY = os.getenv("LANGSEARCH_API_KEY")
 LANGSEARCH_URL = "https://api.langsearch.com/v1/web-search"
 
 app = FastAPI(title="MCP Search Server")
+
+# Initialize database on startup
+@app.on_event("startup")
+def startup_event():
+    init_db()
+    print("✅ Database initialized")
+
+@app.get("/")
+def root():
+    """Health check endpoint"""
+    return {
+        "service": "MCP Memory Server",
+        "status": "running",
+        "version": "1.0.0"
+    }
+
 
 class SearchRequest(BaseModel):
     query: str
@@ -169,6 +205,87 @@ async def scrape(req: ScrapeRequest):
             status_code=500,
             detail=str(e)
         )
+
+
+@app.post("/memory/store", response_model=MemoryStoreResponse)
+def store_memory(request: MemoryStoreRequest):
+    """
+    Store a new memory explicitly.
+    No automatic inference - you control what gets stored.
+    """
+    memory_id = str(uuid.uuid4())
+    
+    try:
+        insert_memory(
+            memory_id=memory_id,
+            content=request.content,
+            type=request.type,
+            tags=request.tags,
+            source=request.source,
+            confidence=request.confidence
+        )
+        
+        return MemoryStoreResponse(
+            memory_id=memory_id,
+            stored_at=datetime.utcnow(),
+            message="Memory stored successfully"
+        )
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to store memory: {str(e)}")
+
+@app.post("/memory/retrieve", response_model=MemoryRetrieveResponse)
+def retrieve_memories(request: MemoryRetrieveRequest):
+    """
+    Retrieve memories matching the query.
+    Simple keyword search for now - embeddings come later.
+    """
+    try:
+        results = fetch_memories(
+            query=request.query,
+            limit=request.limit,
+            type_filter=request.type
+        )
+        
+        memories = [
+            MemoryItem(**result) for result in results
+        ]
+        
+        return MemoryRetrieveResponse(
+            query=request.query,
+            count=len(memories),
+            memories=memories
+        )
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve memories: {str(e)}")
+
+@app.post("/memory/forget", response_model=MemoryForgetResponse)
+def forget_memory(request: MemoryForgetRequest):
+    """
+    Delete a memory by ID.
+    Explicit and immediate - no soft deletes yet.
+    """
+    try:
+        deleted = delete_memory(request.memory_id)
+        
+        return MemoryForgetResponse(
+            memory_id=request.memory_id,
+            deleted=deleted,
+            message="Memory deleted" if deleted else "Memory not found"
+        )
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete memory: {str(e)}")
+
+@app.get("/memory/stats")
+def memory_stats():
+    """Get statistics about stored memories"""
+    try:
+        return get_memory_stats()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
+    
 
 
 """
