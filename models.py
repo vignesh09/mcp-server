@@ -19,6 +19,7 @@ class MemoryRetrieveRequest(BaseModel):
     query: str = Field(..., description="Search query")
     limit: int = Field(default=5, ge=1, le=50, description="Max results to return")
     type: Optional[str] = Field(None, description="Filter by memory type")
+    search_type: str = Field(default="semantic", description="Search type: 'semantic' (vector) or 'keyword' (SQL LIKE)")
 
 class MemoryItem(BaseModel):
     id: str

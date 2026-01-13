@@ -28,6 +28,12 @@ from db import (
     delete_memory,
     get_memory_stats
 )
+from vector_db import (
+    init_vector_db,
+    add_to_vector_db,
+    search_vector_db,
+    delete_from_vector_db
+)
 
 
 
@@ -42,7 +48,9 @@ app = FastAPI(title="MCP Search Server")
 @app.on_event("startup")
 def startup_event():
     init_db()
-    print("✅ Database initialized")
+    print("SQLite database initialized")
+    init_vector_db()
+    print("Vector database initialized")
 
 @app.get("/")
 def root():
@@ -211,11 +219,12 @@ async def scrape(req: ScrapeRequest):
 def store_memory(request: MemoryStoreRequest):
     """
     Store a new memory explicitly.
-    No automatic inference - you control what gets stored.
+    Stores in both SQLite (metadata) and ChromaDB (embeddings for semantic search).
     """
     memory_id = str(uuid.uuid4())
-    
+
     try:
+        # Store in SQLite
         insert_memory(
             memory_id=memory_id,
             content=request.content,
@@ -224,13 +233,26 @@ def store_memory(request: MemoryStoreRequest):
             source=request.source,
             confidence=request.confidence
         )
-        
+
+        # Store in vector DB for semantic search
+        add_to_vector_db(
+            memory_id=memory_id,
+            content=request.content,
+            metadata={
+                "type": request.type,
+                "tags": request.tags,
+                "source": request.source,
+                "confidence": request.confidence,
+                "created_at": datetime.utcnow().isoformat()
+            }
+        )
+
         return MemoryStoreResponse(
             memory_id=memory_id,
             stored_at=datetime.utcnow(),
             message="Memory stored successfully"
         )
-    
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to store memory: {str(e)}")
 
@@ -238,25 +260,51 @@ def store_memory(request: MemoryStoreRequest):
 def retrieve_memories(request: MemoryRetrieveRequest):
     """
     Retrieve memories matching the query.
-    Simple keyword search for now - embeddings come later.
+    Supports two search types:
+    - 'semantic' (default): Vector similarity search using embeddings
+    - 'keyword': SQL LIKE search on content
     """
     try:
-        results = fetch_memories(
-            query=request.query,
-            limit=request.limit,
-            type_filter=request.type
-        )
-        
-        memories = [
-            MemoryItem(**result) for result in results
-        ]
-        
+        if request.search_type == "semantic":
+            # Semantic search using vector DB
+            results = search_vector_db(
+                query=request.query,
+                limit=request.limit,
+                type_filter=request.type
+            )
+            memories = []
+            for result in results:
+                # Parse created_at if it's a string
+                created_at = result.get("created_at", "")
+                if isinstance(created_at, str) and created_at:
+                    created_at = datetime.fromisoformat(created_at)
+                else:
+                    created_at = datetime.utcnow()
+
+                memories.append(MemoryItem(
+                    id=result["id"],
+                    content=result["content"],
+                    type=result["type"],
+                    tags=result["tags"],
+                    source=result["source"],
+                    confidence=result["confidence"],
+                    created_at=created_at
+                ))
+        else:
+            # Keyword search using SQLite
+            results = fetch_memories(
+                query=request.query,
+                limit=request.limit,
+                type_filter=request.type
+            )
+            memories = [MemoryItem(**result) for result in results]
+
         return MemoryRetrieveResponse(
             query=request.query,
             count=len(memories),
             memories=memories
         )
-    
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to retrieve memories: {str(e)}")
 
@@ -264,17 +312,21 @@ def retrieve_memories(request: MemoryRetrieveRequest):
 def forget_memory(request: MemoryForgetRequest):
     """
     Delete a memory by ID.
-    Explicit and immediate - no soft deletes yet.
+    Deletes from both SQLite and vector DB.
     """
     try:
+        # Delete from SQLite
         deleted = delete_memory(request.memory_id)
-        
+
+        # Delete from vector DB
+        delete_from_vector_db(request.memory_id)
+
         return MemoryForgetResponse(
             memory_id=request.memory_id,
             deleted=deleted,
             message="Memory deleted" if deleted else "Memory not found"
         )
-    
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete memory: {str(e)}")
 
